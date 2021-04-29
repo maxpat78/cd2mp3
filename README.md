@@ -3,6 +3,7 @@ cd2mp3
 
 Converts/extracts lossless audio files into lossy ones using ffmpeg.
 
+```
 usage: cd2mp3 [options] directory...
 
 Options:
@@ -15,6 +16,7 @@ Options:
  -q <QUALITY>        set ffmpeg compression quality (default: 6, referred to MP3)
  -t <TYPE>           lossy format type among MP3, OGG, OGA, M4A (default: MP3)
  -v                  show version number
+```
 
 It searches all directory trees starting from specified directories for files with the following suffixes: AIF, ALAC, APE, FLAC, M4A, WAV, WV.
 
