@@ -18,10 +18,20 @@ import java.util.stream.Stream;
 
 import org.apache.commons.cli.*;
 
+/**
+ * App che converte file o tracce audio (queste ultime dopo averle estratte)
+ * in formato lossy tramite ffmpeg
+ *
+ * @author maxpat78
+ */
 class cd2mp3 {
 
-	static String VERSION = "1.017";
-	
+	static String VERSION = "1.018";
+
+	/**
+	 * Classe interna che raccoglie i parametri di conversione
+	 *
+	 */
 	static class Params {
 		// Parametri della riga di comando
 		Path Target;
@@ -36,11 +46,9 @@ class cd2mp3 {
 		List<Integer> cdTracks;
 		
 		Params() {
-//			this.Target = ".";		// default: stesso percorso
 			this.Target =  getUserMusicDir();
 			this.Format = "mp3";	// MP3
 			this.Quality = 6;		// 6 (in base all'encoder lame)
-//			this.Preserve = 1;		// solo nome file (1 elemento)
 			this.Preserve = 2;		// nome file e cartella di origine (2 elementi)
 			this.Canali = 2; 		// canali audio codificati
 			this.Frequenza = 44100; // freq. di campionamento
@@ -50,6 +58,13 @@ class cd2mp3 {
 		}
 	};
 	
+	/**
+	 * Classe interna che conserva le caratteristiche di una traccia audio
+	 * @param start byte iniziale della traccia
+	 * @param length lunghezza in byte della traccia
+	 * @param title titolo della traccia
+	 * @param meta array di informazioni -meta da passare a ffmpeg
+	 */
 	static class TrackInfo {
 		int Start;
 		int Length;
@@ -250,14 +265,24 @@ class cd2mp3 {
     	}
     }
     
-    // Determina l'estensione di un nome di file
+	/**
+	 * Determina l'estensione di un nome di file
+	 *
+	 * @param name stringa con un percorso/nome di file
+	 * @return l'estensione del nome file come <code>Optional</code>
+	 */
     static Optional<String> getFileExtension(String name) {
         return Optional.ofNullable(name)
           .filter(f -> f.contains("."))
           .map(f -> f.substring(name.lastIndexOf(".") + 1));
     }
     
-    // Esegue ffmpeg con la shell di sistema
+	/**
+	 * Esegue ffmpeg con la shell di sistema
+	 *
+	 * @param arr array di stringhe con gli argomenti da passare a ffmpeg
+	 * @return un oggetto Process con l'istanza di ffmpeg avviata
+	 */
     static Process execCmd(String[] arr) throws IOException {
     	String sShell = "sh", sOpt = "-c";
     	if (System.getProperty("os.name").toLowerCase().startsWith("windows")) { 
@@ -283,7 +308,11 @@ class cd2mp3 {
     	return p;
     }
 
-    // Determina la directory regolarmente usata per i file musicali
+	/**
+	 * Determina la directory regolarmente usata per i file musicali
+	 *
+	 * @return un <code>Path</code> con la directory da usare per i file musicali
+	 */
     static Path getUserMusicDir() {
     	if (System.getProperty("os.name").toLowerCase().startsWith("windows"))
             return Path.of(System.getenv("USERPROFILE"), "Music");
@@ -291,8 +320,12 @@ class cd2mp3 {
         return Path.of(System.getenv("HOME"), "music");
     }
 
-    // Determina se il file audio sia un'immagine CD, verificando la
-    // presenza di un CUE sheet omonimo
+	/**
+	 * Determina se il file audio sia un'immagine CD, verificando la
+	 * presenza di un CUE sheet omonimo
+	 * @param p <code>Path</code> di un file audio lossless
+	 * @return un valore <code>boolean</code>
+	 */
     static boolean isAudioCdImage(Path p) {
     	String s = getFileExtension(p.toString()).orElse("");
     	if (s.isEmpty())
@@ -300,8 +333,14 @@ class cd2mp3 {
     	return Files.exists(Path.of(p.toString().replace("."+s, ".cue")));
     }
     
-    // Analizza l'output di ffmpeg per determinare le caratteristiche e la durata del file audio
-    // e, quindi, la sua lunghezza in byte
+	/**
+	 * Analizza l'output di ffmpeg per determinare le caratteristiche e la
+	 * durata del file audio e, quindi, la sua lunghezza in byte una volta
+	 * decompresso
+	 * @param cd <code>Path</code> di un file audio lossless di cui calcolare la dimensione non compressa
+	 * @param o parametri <code>Params</code> di conversione
+	 * @see #Params
+	 */
     static void getUncompressedCdLength(Path cd, Params o) throws InterruptedException, IOException {
     	Process p = execCmd(new String[] {"-i", cd.toString()});
     	p.waitFor();
@@ -327,8 +366,15 @@ class cd2mp3 {
     				Integer.parseInt(ma.group(3))) + 2352*Integer.parseInt(ma.group(4));
     }
     
-    // Crea il Path di destinazione modificando percorso ed estensione
-    // in base alle opzioni date
+	/**
+	 * Crea il <code>Path</code> di destinazione modificando percorso ed estensione
+	 * in base alle opzioni date
+	 * @param src <code>Path</code> del file audio lossless da convertire o estrarre
+	 * @param o parametri <code>Params</code> di conversione
+	 * @see #Params
+	 * @return il <code>Path</code> del corrispondente file lossy da creare,
+	 * costruito in base ai parametri forniti
+	 */
     static Path buildTarget(Path src, Params o) {
     	String ext = getFileExtension(src.toString()).orElse("");
     	Path dst = Path.of(src.toString().replace(ext.toLowerCase(), o.Format));
@@ -357,7 +403,12 @@ class cd2mp3 {
     	return dst;
     }
     
-    // Converte un singolo file audio
+	/**
+	 * Converte un singolo file audio
+	 * @param src <code>Path</code> del file audio lossless da convertire
+	 * @param o parametri <code>Params</code> di conversione
+	 * @see #Params
+	 */
     static void convertFile(Path src, Params o) {
     	Path dst = buildTarget(src,o);
     	Process p;
@@ -390,7 +441,14 @@ class cd2mp3 {
     	System.out.print("ok\n");
     }
     
-    // Analizza un CUE sheet e crea una List di informazioni sulle tracce
+	/**
+	 * Analizza un CUE sheet e crea una List di informazioni sulle tracce
+	 * @param p <code>Path</code> del file CUE da analizzare
+	 * @param o parametri <code>Params</code> di conversione
+	 * @see #Params
+	 * @return una lista di oggetti TrackInfo con le informazioni ricavate sulle tracce
+	 * @see TrackInfo
+	 */
     static List<TrackInfo> parseCueSheet(Path p, Params o) throws IOException {
     	
     	// .lines() assume implicitamente il set di caratteri UTF-8,
@@ -466,7 +524,15 @@ class cd2mp3 {
 		return liTracks;
     }
     
-    // Estrae tracce da un CD audio compresso, decomprimendolo con ffmpeg
+    // 
+	/**
+	 * Estrae tracce da un CD audio compresso, decomprimendolo con ffmpeg
+	 * @param cd <code>Path</code> del file lossless contenente un cd audio
+	 * @param cue lista di tracce costruita con parseCueSheet
+	 * @see #parseCueSheet
+	 * @param o parametri <code>Params</code> di conversione
+	 * @see #Params
+	 */
     static void extractCdTracks(Path cd, List<TrackInfo> cue, Params o) throws IOException, InterruptedException {
 
     	System.out.format("Estrazione di %d tracce da %s\n", cue.size(), cd);
