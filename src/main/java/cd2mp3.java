@@ -26,7 +26,7 @@ import org.apache.commons.cli.*;
  */
 class cd2mp3 {
 
-	static String VERSION = "1.018";
+	static String VERSION = "1.019";
 
 	/**
 	 * Classe interna che raccoglie i parametri di conversione
@@ -233,7 +233,7 @@ class cd2mp3 {
             try {
 	    		items = Files.walk(p)
 	                    .filter(x -> (Files.isRegularFile(x) && m.matches(x.getFileName())) )
-	                    .sorted(Comparator.comparing(x -> x.getFileName()))
+	                    .sorted(Comparator.comparing(x -> x.toString()))
 	                    .collect(Collectors.toList());
             } catch (NoSuchFileException nsfe) {
             	System.out.println("errore!");
