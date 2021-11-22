@@ -2,12 +2,7 @@
 // cd2mp3.java
 //
 
-import java.io.FileDescriptor;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.OutputStreamWriter;
-import java.io.PrintStream;
-import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
@@ -15,7 +10,12 @@ import java.util.regex.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
-
+/*import java.io.FileDescriptor;
+import java.io.FileOutputStream;
+import java.io.OutputStreamWriter;
+import java.io.PrintStream;
+import java.io.UnsupportedEncodingException;
+*/
 import org.apache.commons.cli.*;
 
 /**
@@ -26,7 +26,7 @@ import org.apache.commons.cli.*;
  */
 class cd2mp3 {
 
-	static String VERSION = "1.019";
+	static String VERSION = "1.020";
 
 	/**
 	 * Classe interna che raccoglie i parametri di conversione
@@ -44,12 +44,13 @@ class cd2mp3 {
 		int Campione;
 		int cdSize;
 		List<Integer> cdTracks;
+		Path baseDir; 
 		
 		Params() {
 			this.Target =  getUserMusicDir();
 			this.Format = "mp3";	// MP3
 			this.Quality = 6;		// 6 (in base all'encoder lame)
-			this.Preserve = 2;		// nome file e cartella di origine (2 elementi)
+			this.Preserve = -1;		// elementi del percorso da salvare
 			this.Canali = 2; 		// canali audio codificati
 			this.Frequenza = 44100; // freq. di campionamento
 			this.Campione = 2; 		// dimensione del campione (tipicamente 16 bit)
@@ -224,14 +225,14 @@ class cd2mp3 {
 		//
     	for (String arg : line.getArgs()) {
         	System.out.format("Cerco file audio lossless in \"%s\"... ", arg);
-    		Path p = Paths.get(arg);
+    		opts.baseDir = Paths.get(arg);
             PathMatcher m = FileSystems.getDefault()
             		.getPathMatcher("glob:*.{aif,alac,ape,flac,m4a,wav,wv}");
 
             List<Path> items = null;
             
             try {
-	    		items = Files.walk(p)
+	    		items = Files.walk(opts.baseDir)
 	                    .filter(x -> (Files.isRegularFile(x) && m.matches(x.getFileName())) )
 	                    .sorted(Comparator.comparing(x -> x.toString()))
 	                    .collect(Collectors.toList());
@@ -301,7 +302,7 @@ class cd2mp3 {
     		Runtime.getRuntime().exec("ffmpeg");
     		p = Runtime.getRuntime().exec(o);
     	} catch (Exception e) {
-    		System.out.println("errore esegunedo ffmpeg: PATH?");
+    		System.out.println("errore eseguendo ffmpeg: PATH?");
     		System.exit(1);
     	}
     	
@@ -379,18 +380,31 @@ class cd2mp3 {
     	String ext = getFileExtension(src.toString()).orElse("");
     	Path dst = Path.of(src.toString().replace(ext.toLowerCase(), o.Format));
     	Path Target = o.Target;
+    	int beginIndex = o.Preserve; // conserva nome file e directory radice, di default
     	
     	// Se la destinazione è "$", assume la stessa directory di origine
-    	if (Target.toString().charAt(0) == '$')
+    	if (Target.toString().length() == 1 && Target.toString().charAt(0) == '$')
     		Target = src.getParent();
     	
     	if (Target != Path.of(".")) {
     		String relTarget = dst.getFileName().toString();
-    		if (o.Preserve > 1) {
+    		// Determina automaticamente quanta parte del Path salvare
+    		if (o.Preserve < 0) {
+    			beginIndex = 2;
+    			Path p = Path.of(dst.toString().substring(o.baseDir.toString().length()));
+    			int i = p.getNameCount();
+    			Path r = p.subpath(i-2,  i-1);
+    	        Pattern paDISK = Pattern.compile("DIS[CK] ?\\d+|CD ?\\d+", Pattern.CASE_INSENSITIVE);
+    	        // Se la directory superiore è di tipo DISK1, CD01 ecc.
+    	        // salva anche quella precedente
+    	        if (paDISK.matcher(r.toString()).matches())
+    	        	beginIndex++;
+    		}
+    		if (beginIndex > 1) {
     			int i = dst.getNameCount();
     			// Salva gli ultimi elementi del Path di destinazione
     			// Se -p ne indica di più, li conserva tutti
-    			relTarget = dst.subpath(i - Math.min(o.Preserve, i), i).toString();
+    			relTarget = dst.subpath(i - Math.min(beginIndex, i), i).toString();
     		}
     		dst = Target.resolve(relTarget);
     		// Crea le directory intermedie, se necessario
