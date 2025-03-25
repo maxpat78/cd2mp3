@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -20,13 +21,13 @@ import org.apache.commons.cli.*;
 
 /**
  * App che converte file o tracce audio (queste ultime dopo averle estratte)
- * in formato lossy tramite ffmpeg
+ * tramite ffmpeg
  *
  * @author maxpat78
  */
 class cd2mp3 {
 
-	static String VERSION = "1.020";
+	static String VERSION = "1.022";
 
 	/**
 	 * Classe interna che raccoglie i parametri di conversione
@@ -103,7 +104,7 @@ class cd2mp3 {
     	options.addOption(Option.builder("t")
         		.hasArg()
         		.argName("TIPO")
-        		.desc("imposta il tipo di compressione tra MP3, OGG, OGA, M4A (default: MP3)")
+        		.desc("imposta il tipo di compressione tra MP3, OGG, OGA, M4A, WMA (default: MP3)")
         		.build());
     	options.addOption(Option.builder("q")
         		.hasArg()
@@ -133,7 +134,7 @@ class cd2mp3 {
     	}
 
     	Params opts = new Params();
-    	Set<String> set = new HashSet<> (Arrays.asList("mp3", "m4a", "ogg", "oga"));
+    	Set<String> set = new HashSet<> (Arrays.asList("mp3", "m4a", "ogg", "oga", "wma", "flac", "ape", "alac"));
 
         if (line.hasOption("v")) {
             System.out.format("cd2mp3 versione %s\n", VERSION);
@@ -149,7 +150,7 @@ class cd2mp3 {
         		
         	HelpFormatter formatter = new HelpFormatter();
         	formatter.printHelp( "cd2mp3 [opzioni] directory ...",
-        			"Converte da lossless a lossy una serie di file/tracce audio usando ffmpeg.\nOpzioni:",
+        			"Converte una serie di file/tracce audio usando ffmpeg.\nOpzioni:",
         			options,
         			"\nSe trova un file omonimo con estensione .cue, assume si tratti di un CD\ne ne estrae le tracce.\nOgni sotto directory viene esaminata.");        
     		System.exit(ecode);
@@ -158,7 +159,7 @@ class cd2mp3 {
 		if (line.hasOption("t")) {
 			String j = line.getOptionValue("t").toLowerCase();
 			if (! set.contains(j)) {
-				System.out.format("Formato di conversione non ammesso: %s\n", j);
+				System.out.format("Formato di conversione non ammesso: %s. Dev'essere uno fra %s\n", j, set);
 				System.exit(1);
 			}
 			else
@@ -255,7 +256,7 @@ class cd2mp3 {
 					} catch (Exception e) {
 					}
             		String ext = getFileExtension(x.toString()).orElse("");
-                	Path c = Path.of(x.toString().replace(ext.toLowerCase(), "cue"));
+                	Path c = Path.of(x.toString().replace(ext, "cue"));
                 	List<TrackInfo> cue = parseCueSheet(c, opts);
                 	extractCdTracks(x, cue, opts);
             		continue;
@@ -343,8 +344,9 @@ class cd2mp3 {
 	 * @see #Params
 	 */
     static void getUncompressedCdLength(Path cd, Params o) throws InterruptedException, IOException {
-    	Process p = execCmd(new String[] {"-i", cd.toString()});
-    	p.waitFor();
+    	Process p = execCmd(new String[] {"-hide_banner", "-i", cd.toString()});
+    	// 25.03.25 il timeout previene un blocco di ffmpeg osservato con un FLAC contenente anche uno stream video
+    	p.waitFor(3, TimeUnit.SECONDS);
     	String s = new String(p.getErrorStream().readAllBytes(), "ASCII");
     	//System.out.println("ffmpeg error stream:\n" + s);
     	// Analizza la riga "Duration" dall'output di ffmpeg
@@ -378,7 +380,7 @@ class cd2mp3 {
 	 */
     static Path buildTarget(Path src, Params o) {
     	String ext = getFileExtension(src.toString()).orElse("");
-    	Path dst = Path.of(src.toString().replace(ext.toLowerCase(), o.Format));
+    	Path dst = Path.of(src.toString().replaceFirst(ext.toLowerCase()+"$", o.Format));
     	Path Target = o.Target;
     	int beginIndex = o.Preserve; // conserva nome file e directory radice, di default
     	
@@ -393,12 +395,14 @@ class cd2mp3 {
     			beginIndex = 2;
     			Path p = Path.of(dst.toString().substring(o.baseDir.toString().length()));
     			int i = p.getNameCount();
-    			Path r = p.subpath(i-2,  i-1);
-    	        Pattern paDISK = Pattern.compile("DIS[CK] ?\\d+|CD ?\\d+", Pattern.CASE_INSENSITIVE);
-    	        // Se la directory superiore è di tipo DISK1, CD01 ecc.
-    	        // salva anche quella precedente
-    	        if (paDISK.matcher(r.toString()).matches())
-    	        	beginIndex++;
+    			if (i > 1) {
+	    			Path r = p.subpath(i-2,  i-1);
+	    	        Pattern paDISK = Pattern.compile("DIS[CK] ?\\d+|CD ?\\d+", Pattern.CASE_INSENSITIVE);
+	    	        // Se la directory superiore è di tipo DISK1, CD01 ecc.
+	    	        // salva anche quella precedente
+	    	        if (paDISK.matcher(r.toString()).matches())
+	    	        	beginIndex++;
+    			}
     		}
     		if (beginIndex > 1) {
     			int i = dst.getNameCount();
@@ -436,6 +440,7 @@ class cd2mp3 {
 			return;
     	}
     	
+    	// OCCORRE INSERIRE PARAMETRI SE OGG (-> assumere -c:a libvorbis) OD OGA (-> assumere -c:a libopus)
     	try {
         	p = execCmd(new String[] {"-i", src.toString(), "-v", "quiet", "-y", "-aq", Integer.toString(o.Quality),
         			"-vn", "-map_metadata", "0:g:0", dst.toString()});
@@ -538,7 +543,6 @@ class cd2mp3 {
 		return liTracks;
     }
     
-    // 
 	/**
 	 * Estrae tracce da un CD audio compresso, decomprimendolo con ffmpeg
 	 * @param cd <code>Path</code> del file lossless contenente un cd audio
@@ -565,7 +569,9 @@ class cd2mp3 {
     		// Elimina gli eventuali caratteri illeciti nel nome file da formare
     		// e ne trae un Path
     		tr.Title = tr.Title.replaceAll("[\\r\\n\"\\:\\?\\*\\/\\\\]", "");
-    		tr.Title = String.format("%02d - %s.%s", i++, tr.Title, o.Format);
+    		//tr.Title = String.format("%02d - %s.%s", i++, tr.Title, o.Format);
+    		// Usa un formato coerente con la vecchia edizione Python
+    		tr.Title = String.format("%02d %s.%s", i++, tr.Title, o.Format);
     		Path dst = cd.resolveSibling(tr.Title);
     		// Aggiusta il Path in base ai parametri dati
         	dst = buildTarget(dst, o);
@@ -580,7 +586,7 @@ class cd2mp3 {
     			continue;
     		}
     		
-    		// Non riconverte se gi� presente
+    		// Non riconverte se già presente
         	if (Files.exists(dst)) {
     			System.out.print("presente!\n");
     			continue;
