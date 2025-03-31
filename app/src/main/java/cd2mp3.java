@@ -27,7 +27,7 @@ import org.apache.commons.cli.*;
  */
 class cd2mp3 {
 
-	static String VERSION = "1.022";
+	static String VERSION = "1.024";
 
 	/**
 	 * Classe interna che raccoglie i parametri di conversione
@@ -53,8 +53,8 @@ class cd2mp3 {
 			this.Quality = 6;		// 6 (in base all'encoder lame)
 			this.Preserve = -1;		// elementi del percorso da salvare
 			this.Canali = 2; 		// canali audio codificati
-			this.Frequenza = 44100; // freq. di campionamento
-			this.Campione = 2; 		// dimensione del campione (tipicamente 16 bit)
+			this.Frequenza = 44100; // freq. di campionamento (Hz)
+			this.Campione = 2; 		// dimensione in byte del campione (tipica: 16 bit)
 			this.cdSize = 783216000;
 			this.cdTracks = new ArrayList<Integer>();
 		}
@@ -109,7 +109,7 @@ class cd2mp3 {
     	options.addOption(Option.builder("q")
         		.hasArg()
         		.argName("QUALITA")
-        		.desc("imposta la qualità di compressione di ffmpeg (default: 6, relativa a MP3)")
+        		.desc("imposta la qualità di compressione di ffmpeg (default: 6 (MP3), 64000 (Opus))")
         		.build());
     	options.addOption(Option.builder("p")
         		.hasArg()
@@ -164,6 +164,17 @@ class cd2mp3 {
 			}
 			else
 				opts.Format = j;
+
+			// Adatta il parametro qualità al formato  
+			switch (opts.Format) {
+			case "oga":
+				opts.Quality = 64000; // bit rate base
+				break;
+			case "ogg":
+				opts.Quality = 3; // significato invertito
+				break;
+			}
+			
 		}
 
 		if (line.hasOption("d")) {
@@ -344,7 +355,7 @@ class cd2mp3 {
 	 * @see #Params
 	 */
     static void getUncompressedCdLength(Path cd, Params o) throws InterruptedException, IOException {
-    	Process p = execCmd(new String[] {"-hide_banner", "-i", cd.toString()});
+    	Process p = execCmd(new String[] {"-hide_banner", "-i", cd.toString(), "-vn"});
     	// 25.03.25 il timeout previene un blocco di ffmpeg osservato con un FLAC contenente anche uno stream video
     	p.waitFor(3, TimeUnit.SECONDS);
     	String s = new String(p.getErrorStream().readAllBytes(), "ASCII");
@@ -441,9 +452,28 @@ class cd2mp3 {
     	}
     	
     	// OCCORRE INSERIRE PARAMETRI SE OGG (-> assumere -c:a libvorbis) OD OGA (-> assumere -c:a libopus)
+    	// libvorbis interpreta in modo diverso la qualità mentre libopus non la supporta (-> usare il bitrate VBR)
+    	String[] args = null;
+    	String dst_s = dst.toString();
+    	if (dst_s.endsWith("oga")) {
+    		args = new String[] {"-i", src.toString(), "-v", "quiet", "-y", "-b", Integer.toString(o.Quality),
+        			"-f", "ogg", "-c:a", "libopus", "-vn", "-map_metadata", "0:g:0", dst_s};
+    	}
+    	else if (dst_s.endsWith("ogg")) {
+    		args = new String[] {"-i", src.toString(), "-v", "quiet", "-y", "-aq", Integer.toString(o.Quality),
+        			"-f", "ogg", "-c:a", "libvorbis", "-vn", "-map_metadata", "0:g:0", dst_s};
+    	}
+    	else if (dst_s.endsWith("m4a")) {
+    		args = new String[] {"-i", src.toString(), "-v", "quiet", "-y", "-aq", Integer.toString(o.Quality),
+        			"-f", "ogg", "-c:a", "aac", "-vn", "-map_metadata", "0:g:0", dst_s};
+    	}
+    	else {
+    		args = new String[] {"-i", src.toString(), "-v", "quiet", "-y", "-aq", Integer.toString(o.Quality),
+        			"-vn", "-map_metadata", "0:g:0", dst_s};
+    	}
+   	
     	try {
-        	p = execCmd(new String[] {"-i", src.toString(), "-v", "quiet", "-y", "-aq", Integer.toString(o.Quality),
-        			"-vn", "-map_metadata", "0:g:0", dst.toString()});
+        	p = execCmd(args);
 			// SE NON SI CHIUDONO GLI STREAM, FFMPEG NON TERMINA!
 			p.getInputStream().close();
 			p.getOutputStream().close();
@@ -473,6 +503,7 @@ class cd2mp3 {
     	// .lines() assume implicitamente il set di caratteri UTF-8,
     	// ma noi ignoriamo quello effettivo! L'uso di un set monobyte 
     	// preserva da eccezioni da decodifica, ma non garantisce la correttezza!
+    	// Usare CharsetDetector di Apache Tika ?
     	Stream<String> lines = Files.lines(p, StandardCharsets.ISO_8859_1);
     	
         Pattern paTRACK = Pattern.compile("TRACK\\s+(\\d{2})");
@@ -594,6 +625,7 @@ class cd2mp3 {
     		
         	// Comprime la traccia usando una nuova pipeline
         	// "-i -" va specificato DOPO la descrizione dello stream
+        	// SPECIALIZZARE ANCHE QUI PER OGA, OGG, M4A!
         	String[] args = Stream.of( new String[] {"-v", "error", "-f", "s16le",
     				"-ar", Integer.toString(o.Frequenza),
     				"-ac", Integer.toString(o.Canali),
