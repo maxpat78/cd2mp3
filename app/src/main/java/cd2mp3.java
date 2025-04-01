@@ -27,7 +27,7 @@ import org.apache.commons.cli.*;
  */
 class cd2mp3 {
 
-	static String VERSION = "1.024";
+	static String VERSION = "1.025";
 
 	/**
 	 * Classe interna che raccoglie i parametri di conversione
@@ -453,27 +453,22 @@ class cd2mp3 {
     	
     	// OCCORRE INSERIRE PARAMETRI SE OGG (-> assumere -c:a libvorbis) OD OGA (-> assumere -c:a libopus)
     	// libvorbis interpreta in modo diverso la qualità mentre libopus non la supporta (-> usare il bitrate VBR)
-    	String[] args = null;
     	String dst_s = dst.toString();
-    	if (dst_s.endsWith("oga")) {
-    		args = new String[] {"-i", src.toString(), "-v", "quiet", "-y", "-b", Integer.toString(o.Quality),
-        			"-f", "ogg", "-c:a", "libopus", "-vn", "-map_metadata", "0:g:0", dst_s};
+    	// Modello base di argomenti per ffmpeg
+		ArrayList<String> args = new ArrayList<String>(List.of("-i", src.toString(), "-v", "quiet", "-y",
+				"-aq", Integer.toString(o.Quality),	"-vn", "-map_metadata", "0:g:0", dst_s));
+
+		if (dst_s.endsWith("oga")) {
+			args.set(5, "-b"); // -aq -> -b
+			args.addAll(7, List.of("-f", "ogg", "-c:a", "libopus"));
     	}
-    	else if (dst_s.endsWith("ogg")) {
-    		args = new String[] {"-i", src.toString(), "-v", "quiet", "-y", "-aq", Integer.toString(o.Quality),
-        			"-f", "ogg", "-c:a", "libvorbis", "-vn", "-map_metadata", "0:g:0", dst_s};
-    	}
-    	else if (dst_s.endsWith("m4a")) {
-    		args = new String[] {"-i", src.toString(), "-v", "quiet", "-y", "-aq", Integer.toString(o.Quality),
-        			"-f", "ogg", "-c:a", "aac", "-vn", "-map_metadata", "0:g:0", dst_s};
-    	}
-    	else {
-    		args = new String[] {"-i", src.toString(), "-v", "quiet", "-y", "-aq", Integer.toString(o.Quality),
-        			"-vn", "-map_metadata", "0:g:0", dst_s};
-    	}
+    	else if (dst_s.endsWith("ogg"))
+			args.addAll(7, List.of("-f", "ogg", "-c:a", "libvorbis"));
+    	else if (dst_s.endsWith("m4a"))
+			args.addAll(7, List.of("-c:a", "aac"));
    	
     	try {
-        	p = execCmd(args);
+        	p = execCmd(args.toArray(new String[0]));
 			// SE NON SI CHIUDONO GLI STREAM, FFMPEG NON TERMINA!
 			p.getInputStream().close();
 			p.getOutputStream().close();
@@ -587,7 +582,7 @@ class cd2mp3 {
     	System.out.format("Estrazione di %d tracce da %s\n", cue.size(), cd);
     	
     	Process p = null;
-    	//String out;
+//    	String out;
     	
     	// Apre una pipeline per leggere i dati grezzi del cd audio decodificato da ffmpeg
     	p = execCmd(new String[] {"-i", cd.toString(), "-v", "quiet", "-f", "s16le", "-ar", Integer.toString(o.Frequenza) , "-"});
@@ -625,20 +620,32 @@ class cd2mp3 {
     		
         	// Comprime la traccia usando una nuova pipeline
         	// "-i -" va specificato DOPO la descrizione dello stream
-        	// SPECIALIZZARE ANCHE QUI PER OGA, OGG, M4A!
+        	String dst_s = dst.toString();
+        	
+        	String[] other_args = new String[0];
+        	if(dst_s.endsWith("oga"))
+        		other_args = new String[] {"-f", "ogg", "-c:a", "libopus"};
+        	else if(dst_s.endsWith("ogg"))
+        		other_args = new String[] {"-f", "ogg", "-c:a",  "libvorbis"};
+        	else if(dst_s.endsWith("m4a"))
+        		other_args = new String[] {"-c:a", "aac"};
+        	
         	String[] args = Stream.of( new String[] {"-v", "error", "-f", "s16le",
     				"-ar", Integer.toString(o.Frequenza),
     				"-ac", Integer.toString(o.Canali),
     				"-i", "-"},
+        			other_args,
         			tr.Meta, // EVITARE LA PRESENZA DI APICI, O FFMPEG FALLIRA'!
-    				new String[] {dst.toString()} )
+    				new String[] {dst_s} )
         			.flatMap(Stream::of)
         			.toArray(String[]::new);
         	
+        		
         	Process p2 = execCmd(args);
         	
-    		//out = new String(p2.getErrorStream().readAllBytes(), "ASCII");
-        	//System.out.format("DBG: %s\n", out);
+        	// NOTA: la lettura di questo stream in condizioni normali (=senza errori) BLOCCA ffmpeg!
+//    		out = new String(p2.getErrorStream().readAllBytes(), "ASCII");
+//        	System.out.format("DBG: %s\n", out);
 
         	p2.getOutputStream().write(raw_track);
         	p2.getOutputStream().close();
